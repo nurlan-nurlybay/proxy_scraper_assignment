@@ -1,7 +1,8 @@
 # proxy_scraper/proxy_scraper/spiders/proxy_spider.py
 
 import scrapy
-import base64 # module for decoding
+import base64  # Module for decoding base64 encoded strings
+from ..items import ProxyItem
 
 class ProxySpider(scrapy.Spider):
     name = "proxy_spider"
@@ -9,7 +10,7 @@ class ProxySpider(scrapy.Spider):
     start_urls = ["https://advanced.name/freeproxy"]
 
     collected_proxies_count = 0
-    MAX_PROXIES_TO_COLLECT = 150
+    MAX_PROXIES_TO_COLLECT = 10
 
     def parse(self, response):
         """
@@ -23,46 +24,46 @@ class ProxySpider(scrapy.Spider):
 
         if not proxy_rows:
             self.logger.warning(f"No proxy rows found on {response.url}. Check HTML structure or if page is empty.")
-            return # Stop processing this page if no rows are found
+            return  # Stop processing this page if no rows are found
 
         for i, row in enumerate(proxy_rows):
             if self.collected_proxies_count >= self.MAX_PROXIES_TO_COLLECT:
                 self.logger.info(f"Collected {self.MAX_PROXIES_TO_COLLECT} proxies. Stopping processing current page rows.")
-                break # Stop processing rows on the current page if we have enough
-
+                break  # Stop processing rows on the current page if we have enough
+            
             # Parse
             encoded_ip = row.css('td:nth-child(2)::attr(data-ip)').get()
             encoded_port = row.css('td:nth-child(3)::attr(data-port)').get()
             protocols_raw = row.css('td:nth-child(4) a::text').getall()
             protocols = [p.strip() for p in protocols_raw if p.strip()]
-            protocols = list(dict.fromkeys(protocols)) # Remove duplicates
+            protocols = list(dict.fromkeys(protocols))  # Remove duplicates while preserving order
 
             ip = None
             port = None
 
-            # Decode IP address
+            # Decode base64 encoded IP and port
             if encoded_ip:
                 try:
-                    ip = base64.b64decode(encoded_ip).decode('utf-8')
+                    ip = base64.b64decode(encoded_ip).decode('utf-8').strip()
                 except Exception as e:
-                    self.logger.warning(f"Could not decode IP '{encoded_ip}': {e}. Skipping this row.")
-                    continue # Skip this row if IP decoding fails
+                    self.logger.warning(f"Could not base64 decode IP '{encoded_ip}': {e}. Skipping this row.")
+                    continue  # Skip this row if IP decoding fails
 
-            # Decode and convert Port to int
             if encoded_port:
                 try:
-                    port = int(base64.b64decode(encoded_port).decode('utf-8'))
+                    port = int(base64.b64decode(encoded_port).decode('utf-8').strip())
                 except Exception as e:
-                    self.logger.warning(f"Could not decode or convert port '{encoded_port}': {e}. Skipping this row.")
-                    continue # Skip this row if Port decoding/conversion fails
-            
-            # Check if we have valid IP, Port, and Protocols, else skip this row
+                    self.logger.warning(f"Could not base64 decode or convert port '{encoded_port}': {e}. Skipping this row.")
+                    continue  # Skip this row if IP decoding fails
+
+            # Yield a ProxyItem
             if ip and port is not None and protocols:
-                yield {
-                    'ip': ip.strip(),
-                    'port': port,
-                    'protocols': protocols
-                }
+                proxy_item = ProxyItem(
+                    ip=ip,
+                    port=port,
+                    protocols=protocols
+                )
+                yield proxy_item
                 self.collected_proxies_count += 1
             else:
                 self.logger.warning(f"Skipping row {i+1} due to missing data: IP={ip}, Port={port}, Protocols={protocols}")

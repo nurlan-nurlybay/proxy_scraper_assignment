@@ -1,12 +1,14 @@
-# Define here the models for your scraped items
-#
-# See documentation in:
-# https://docs.scrapy.org/en/latest/topics/items.html
+# proxy_scraper/proxy_scraper/items.py
 
 import scrapy
 
 
-class ProxyScraperItem(scrapy.Item):
-    # define the fields for your item here like:
-    # name = scrapy.Field()
-    pass
+class ProxyItem(scrapy.Item):
+    ip = scrapy.Field()
+    port = scrapy.Field()
+    protocols = scrapy.Field()
+
+
+class UploadResultItem(scrapy.Item):
+    save_id = scrapy.Field()
+    uploaded_proxies = scrapy.Field()
