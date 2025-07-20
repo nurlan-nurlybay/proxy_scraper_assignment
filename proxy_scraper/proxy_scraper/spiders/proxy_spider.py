@@ -10,20 +10,20 @@ class ProxySpider(scrapy.Spider):
     start_urls = ["https://advanced.name/freeproxy"]
 
     collected_proxies_count = 0
-    MAX_PROXIES_TO_COLLECT = 10
+    MAX_PROXIES_TO_COLLECT = 150
 
     def parse(self, response):
         """
         This method is called for each URL in start_urls and for subsequent pages.
         It's responsible for parsing the downloaded HTML response and extracting data from the table.
         """
-        self.logger.info(f"Processing URL: {response.url}")
+        # self.logger.info(f"Processing URL: {response.url}")
 
         # Target the table rows containing proxies: type#id, follow to its attributes (tbody and then tr elements)
         proxy_rows = response.css('table#table_proxies tbody tr')
 
         if not proxy_rows:
-            self.logger.warning(f"No proxy rows found on {response.url}. Check HTML structure or if page is empty.")
+            # self.logger.warning(f"No proxy rows found on {response.url}. Check HTML structure or if page is empty.")
             return  # Stop processing this page if no rows are found
 
         for i, row in enumerate(proxy_rows):

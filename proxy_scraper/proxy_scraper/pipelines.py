@@ -1,18 +1,16 @@
-# proxy_scraper/proxy_scraper/pipelines.py
-
 import json
 import os
 import time
 from collections import defaultdict
-# from scrapy.exceptions import DropItem
 import requests 
 from .items import ProxyItem
-# from .items import UploadResultItem
 
+# --- MODULE-LEVEL CONSTANTS ---
 PERSONAL_TOKEN = "t_1a6e35f4" 
 UPLOAD_URL_MODULE = "https://test-rg8.ddns.net/api/post_proxies" 
+GET_TOKEN_URL_MODULE = "https://test-rg8.ddns.net/api/get_token" 
 MAX_PROXIES_PER_UPLOAD_MODULE = 10
-MAX_BATCHES_TO_UPLOAD = 1 
+MAX_BATCHES_TO_UPLOAD = 15 
 
 class JsonWriterPipeline:
     def __init__(self):
@@ -26,7 +24,7 @@ class JsonWriterPipeline:
         return item
 
     def close_spider(self, spider):
-        spider.logger.info(f"Writing {len(self.proxies_data)} proxies to {self.proxies_file_path}")
+        # spider.logger.info(f"Writing {len(self.proxies_data)} proxies to {self.proxies_file_path}")
         try:
             with open(self.proxies_file_path, 'w', encoding='utf-8') as f:
                 f.write("[\n")
@@ -51,6 +49,7 @@ class UploadPipeline:
         
         self.PERSONAL_TOKEN = PERSONAL_TOKEN
         self.UPLOAD_URL = UPLOAD_URL_MODULE 
+        self.GET_TOKEN_URL = GET_TOKEN_URL_MODULE 
         self.MAX_PROXIES_PER_UPLOAD = MAX_PROXIES_PER_UPLOAD_MODULE 
         self.user_id = self.PERSONAL_TOKEN 
 
@@ -65,45 +64,54 @@ class UploadPipeline:
 
     def process_item(self, item, spider):
         if isinstance(item, ProxyItem):
-            self.proxies_to_upload.append(dict(item)) 
+            proxy_dict = dict(item) 
+            self.proxies_to_upload.append(proxy_dict) 
             return item 
         return item
 
     def close_spider(self, spider):
         spider.logger.info("Spider closed. Attempting to upload collected proxies.")
         
-        # Make an initial GET request to the form page to establish session and get cookies
-        try:
-            spider.logger.info(f"Establishing session with GET request to {self.form_page_url}")
-            get_response = self.session.get(self.form_page_url)
-            get_response.raise_for_status() 
-            spider.logger.info(f"Session established. Cookies: {self.session.cookies.get_dict()}")
-            
-            # Explicitly set the x-user_id cookie in the session's cookie jar
-            self.session.cookies.set('x-user_id', self.PERSONAL_TOKEN, domain='test-rg8.ddns.net', path='/')
-            spider.logger.info(f"Manually set x-user_id cookie. Cookies now: {self.session.cookies.get_dict()}")
-            
-        except requests.exceptions.RequestException as e:
-            spider.logger.error(f"Failed to establish session with GET request to {self.form_page_url}: {e}. Continuing anyway, but this might be the issue.")
-
         if self.proxies_to_upload:
             for i in range(0, len(self.proxies_to_upload), self.MAX_PROXIES_PER_UPLOAD):
                 if self.uploaded_batches_count >= MAX_BATCHES_TO_UPLOAD:
-                    spider.logger.info(f"Reached the maximum of {MAX_BATCHES_TO_UPLOAD} batches.")
+                    spider.logger.info(f"Reached {MAX_BATCHES_TO_UPLOAD} batches for testing. Skipping remaining uploads.")
                     break 
+
+                self.session = requests.Session() 
+
+                try:
+                    # spider.logger.info(f"Establishing session with GET request to {self.form_page_url} for batch {self.uploaded_batches_count + 1}")
+                    get_response = self.session.get(self.form_page_url)
+                    get_response.raise_for_status() 
+                    # spider.logger.info(f"Session established. Cookies after /task GET: {self.session.cookies.get_dict()}")
+                    
+                    self.session.cookies.set('x-user_id', self.PERSONAL_TOKEN, domain='test-rg8.ddns.net', path='/')
+                    # spider.logger.info(f"Manually set x-user_id cookie. Cookies now: {self.session.cookies.get_dict()}")
+                    
+                except requests.exceptions.RequestException as e:
+                    spider.logger.error(f"Failed to establish session with GET request to {self.form_page_url} for batch {self.uploaded_batches_count + 1}: {e}. Continuing anyway, but this might be the issue.")
+
+                try:
+                    # spider.logger.info(f"Fetching fresh form_token from GET request to {self.GET_TOKEN_URL} for batch {self.uploaded_batches_count + 1}")
+                    token_response = self.session.get(self.GET_TOKEN_URL)
+                    token_response.raise_for_status()
+                    # spider.logger.info(f"Fresh form_token fetched. Cookies after /get_token GET: {self.session.cookies.get_dict()}")
+                except requests.exceptions.RequestException as e:
+                    spider.logger.error(f"Failed to fetch fresh form_token from {self.GET_TOKEN_URL} for batch {self.uploaded_batches_count + 1}: {e}. Upload might fail.")
 
                 batch = self.proxies_to_upload[i:i + self.MAX_PROXIES_PER_UPLOAD]
                 
-                proxies_comma_separated_string = ",".join([f"{proxy['ip']}:{proxy['port']}" for proxy in batch])
+                proxies_comma_separated_string = ",".join([f"{p['ip']}:{p['port']}" for p in batch])
 
                 json_payload_dict = {
                     "token": self.PERSONAL_TOKEN,
                     "user_id": self.user_id, 
-                    "len": len(batch),       
+                    "len": len(batch),
                     "proxies": proxies_comma_separated_string 
                 }
 
-                formatted_batch_for_results_json = [f"{proxy['ip']}:{proxy['port']}" for proxy in batch] 
+                formatted_batch_for_results_json = [f"{p['ip']}:{p['port']}" for p in batch] 
 
                 headers = {
                     'Referer': self.form_page_url,
@@ -111,16 +119,14 @@ class UploadPipeline:
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
                 }
                 
-                # --- DEBUG PRINT STATEMENTS ---
-                spider.logger.info(f"DEBUG: UPLOAD_URL: {self.UPLOAD_URL}")
-                spider.logger.info(f"DEBUG: JSON Payload Dict being sent (type: {type(json_payload_dict)}):")
-                spider.logger.info(json.dumps(json_payload_dict, indent=4)) 
-                spider.logger.info(f"DEBUG: Headers being sent: {headers}")
-                spider.logger.info(f"DEBUG: Cookies in session before POST: {self.session.cookies.get_dict()}")
-                # --- END DEBUG PRINT STATEMENTS ---
+                # spider.logger.info(f"DEBUG: UPLOAD_URL: {self.UPLOAD_URL}")
+                # spider.logger.info(f"DEBUG: JSON Payload Dict being sent (type: {type(json_payload_dict)}):")
+                # spider.logger.info(json.dumps(json_payload_dict, indent=4)) 
+                # spider.logger.info(f"DEBUG: Headers being sent: {headers}")
+                # spider.logger.info(f"DEBUG: Cookies in session before POST: {self.session.cookies.get_dict()}")
 
                 try:
-                    spider.logger.info(f"Submitting batch {i//self.MAX_PROXIES_PER_UPLOAD + 1} "
+                    spider.logger.info(f"Submitting batch {self.uploaded_batches_count + 1} "
                                         f"of {len(batch)} proxies to {self.UPLOAD_URL}")
                     
                     upload_response = self.session.post(
@@ -141,16 +147,16 @@ class UploadPipeline:
                         spider.logger.warning(f"Upload successful but no 'save_id' found in response for batch. Response: {response_json}")
 
                 except requests.exceptions.RequestException as e:
-                    spider.logger.error(f"Failed to upload batch to {self.UPLOAD_URL}: {e}")
+                    spider.logger.error(f"Failed to upload batch {self.uploaded_batches_count + 1} to {self.UPLOAD_URL}: {e}")
                     if hasattr(e, 'response') and e.response is not None:
                         spider.logger.error(f"Response content: {e.response.text}")
                 except json.JSONDecodeError:
-                    spider.logger.error(f"Failed to decode JSON response from {self.UPLOAD_URL} for batch. Response: {upload_response.text}")
+                    spider.logger.error(f"Failed to decode JSON response from {self.UPLOAD_URL} for batch {self.uploaded_batches_count + 1}. Response: {upload_response.text}")
                 except Exception as e:
-                    spider.logger.error(f"An unexpected error occurred during proxy upload for batch: {e}")
+                    spider.logger.error(f"An unexpected error occurred during proxy upload for batch {self.uploaded_batches_count + 1}: {e}")
                 
                 self.uploaded_batches_count += 1 
-                time.sleep(5) 
+                time.sleep(15) 
 
         else:
             spider.logger.info("No proxies collected to upload.")
@@ -174,4 +180,3 @@ class UploadPipeline:
             spider.logger.info(f"Spider execution time ({time_format}) saved to {self.time_file_path}")
         except Exception as e:
             spider.logger.error(f"Failed to save execution time to {self.time_file_path}: {e}")
-            
